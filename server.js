@@ -4,17 +4,26 @@ const
 	express = require('express'),
 	app = express(),
 	spawn = require('child_process').spawn,
-	CPU_NUM = require('os').cpus().length;
+	PORT = process.argv[2],
+	CPU_NUM = require('os').cpus().length,
+	RED_COLOR = '\033[1;31m',
+	GREEN_COLOR = '\033[1;32m',
+	YELLOW_COLOR = '\033[1;33m',
+	BLUE_COLOR = '\033[1;36m',
+	NULL_COLOR = '\033[m',
+	stdFlowControl = function(data) {
+		console.log(`${data}`);
+	};
 
 
 if(cluster.isMaster) {
 
-	console.log("\033[1;36mTotal cpu's = " + CPU_NUM + '\033[m');
+	console.log(`${YELLOW_COLOR}Total cpus = ${CPU_NUM}${NULL_COLOR}`);
 	for(let i=0; i < CPU_NUM; i++)
 		cluster.fork();
 
 	cluster.on('online', (worker) => {
-		console.log('\033[1;32m' + worker.process.pid + ' is online\033[m');
+		console.log(`${YELLOW_COLOR}${worker.process.pid} is online${NULL_COLOR}`);
 	});
 
 	// bi-directional local connection router <==> dealer
@@ -51,37 +60,49 @@ if(cluster.isMaster) {
 		//	console.log();
 		//	res.send(obj);
 		//});
-		let obj = JSON.stringify(req.query);
 
-		pyProcess = spawn('python3', ['data_processing.py', obj]);
+		let request = zmq.socket('req').connect('tcp://127.0.0.1:6666');
+		request.send(JSON.stringify(req.query));
 
-		pyProcess.stdout.on('data', (data) => { console.log(data.toString('utf8')); });
-		pyProcess.stderr.on('data', (data) => { console.log(data.toString('utf8')); });
-		pyProcess.on('close', (code) => {
-			console.log("Python process ended with code " + code);
-			if(code == 0)
-				res.send('Houve um erro durante o processamento');
-			else
-				res.send('Tudo sussa, meu parca :D');
+		request.on('message', (data) => {
+
+			let obj = JSON.parse(data);
+			let ipMask = new RegExp('(([0-9]{1,3}.){3}[0-9]{1,3})');
+
+			let statusMessage = obj.code == 0 ? 'Num vai dar nao' : 'Tudo perfeitamente perfeito'
+			let COLOR = obj.code == 0 ? RED_COLOR : GREEN_COLOR;
+
+			obj.from_ip = req.ip.match(ipMask) === null ? '127.0.0.1' : req.ip.match(ipMask)[0];			
+
+			process.stdout.write(COLOR);
+			console.log(obj);
+			console.log(NULL_COLOR);
+			obj.statusMessage = statusMessage;
+			
+			res.send(obj);
 		});
 	});
 
-	app.listen(3000, () => { console.log('\033[1;36mServer is running on port 3000\033[m'); });
+	app.listen(PORT, () => { console.log(`${YELLOW_COLOR}Server is running on port ${PORT}...${NULL_COLOR}`); });
 
 } else {
 
 	let response = zmq.socket('rep').connect('ipc://dealer_socket.ipc');
 
-	response.on('message', function(data) {
+	response.on('message', (data) => {
 
-		let obj = JSON.parse(data);
-		
-		response.send(JSON.stringify({
-			pid: process.pid,
-			timestamp: Date.now(),
-			date: (Date (Date.now())).toString(),
-			processed_data: obj
-		}));
+		let pyProcess = spawn('python3', ['data_processing.py', data, process.pid]);
+
+		pyProcess.stdout.on('data', (data) => { stdFlowControl(data); });
+		pyProcess.on('close', (code) => {
+			response.send(JSON.stringify({
+				pid: process.pid,
+				code: code,
+				timestamp: Date.now(),
+				date: (Date (Date.now)).toString(),
+				processed_data: JSON.parse(data)
+			}));
+		});
 	});
 }
 
