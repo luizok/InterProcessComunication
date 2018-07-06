@@ -4,6 +4,8 @@ const
 	express = require('express'),
 	app = express(),
 	spawn = require('child_process').spawn,
+	fs = require('fs'),
+
 	PORT = process.argv[2],
 	CPU_NUM = require('os').cpus().length,
 	RED_COLOR = '\033[1;31m',
@@ -11,6 +13,20 @@ const
 	YELLOW_COLOR = '\033[1;33m',
 	NULL_COLOR = '\033[m',
 	IP_MASK = new RegExp('(([0-9]{1,3}.){3}[0-9]{1,3})');
+	IPC_MASK = new RegExp('[a-z0-9]+_socket.ipc$');
+
+cleanUp = function() {
+
+	fs.readdir(__dirname, (err, files) => {
+			files.forEach((file) => {
+			if(file.match(IPC_MASK))
+				fs.unlink(file, (err) => { if(err) throw err });	
+		});
+
+		console.log();
+		process.exit(0);
+	});
+};
 
 
 if(cluster.isMaster) {
@@ -68,6 +84,9 @@ if(cluster.isMaster) {
 			res.send(obj);
 		});
 	});
+
+	process.on('SIGINT', () => { cleanUp(); });
+	process.on('SIGTERM', () => { cleanUp(); });
 
 	// Intializing the server
 	app.listen(PORT, () => { console.log(`${YELLOW_COLOR}Server is running on port ${PORT}...${NULL_COLOR}`); });
